@@ -261,38 +261,91 @@ Consulta do usuário
           Ranking Final
 ```
 
-## Execução esperada
+## Execução
 
-Após instalar as dependências:
+Instalar as dependências:
 
 ```bash
-pip install streamlit pandas rank-bm25 sentence-transformers
+python -m pip install -r requirements.txt
 ```
 
 Executar:
 
 ```bash
-streamlit run healthsearch_app.py
+python -m streamlit run healthsearch_app.py
 ```
+
+> Use `python -m streamlit` em vez de `streamlit` direto: quando o pip instala no modo
+> `--user`, o executável `streamlit.exe` fica fora do `PATH` no Windows.
+
+Na primeira execução os modelos são baixados do Hugging Face (~600 MB no total) e
+ficam em cache local; a partir daí a aplicação roda offline.
 
 ## Estratégia de desenvolvimento
 
 Para evitar implementar tudo de uma vez, o desenvolvimento pode seguir esta sequência:
 
-- [ ] Montar corpus médico hardcoded;
-- [ ] implementar pré-processamento;
-- [ ] implementar e validar BM25;
-- [ ] adicionar sliders `k1` e `b`;
-- [ ] implementar embeddings e similaridade de cosseno;
-- [ ] criar rankings individuais;
-- [ ] implementar RRF;
-- [ ] adicionar controle de `α`;
-- [ ] construir abas e matriz comparativa;
-- [ ] implementar Cross-Encoder nos Top-3;
-- [ ] adicionar comparação antes/depois do re-ranking;
-- [ ] testar consultas léxicas, semânticas e códigos médicos;
-- [ ] gerar gráfico comparativo;
+- [x] Montar corpus médico hardcoded;
+- [x] implementar pré-processamento;
+- [x] implementar e validar BM25;
+- [x] adicionar sliders `k1` e `b`;
+- [x] implementar embeddings e similaridade de cosseno;
+- [x] criar rankings individuais;
+- [x] implementar RRF;
+- [x] adicionar controle de `α`;
+- [x] construir abas e matriz comparativa;
+- [x] implementar Cross-Encoder nos Top-3;
+- [x] adicionar comparação antes/depois do re-ranking;
+- [x] testar consultas léxicas, semânticas e códigos médicos;
+- [x] gerar gráfico comparativo;
 - [ ] preparar relatório técnico em PDF.
+
+## Decisões de implementação
+
+### Escolha do modelo de embeddings
+
+Três modelos multilíngues foram comparados no próprio corpus, medindo a **posição do
+documento-alvo** para consultas que o BM25 não consegue resolver (sinônimos puros):
+
+| Modelo | Rank médio do alvo | Doc 1 em "infarto" | Separação dos scores |
+|---|---:|---:|---:|
+| `paraphrase-multilingual-MiniLM-L12-v2` | 2.57 | 5º | 0.280 |
+| `multilingual-e5-small` | 2.57 | 6º | 0.040 |
+| **`distiluse-base-multilingual-cased-v1`** | **2.14** | **2º** | 0.235 |
+
+O `distiluse` foi escolhido por ser o único que recupera o Doc 1 (*síndrome coronariana*)
+no Top-3 para `infarto`, `ataque cardíaco` e `isquemia miocárdica` — exatamente a falha
+dos sistemas léxicos descrita no estudo de caso. O `e5-small` acertava mais o Top-1, mas
+comprimia todas as similaridades entre 0.82 e 0.88, o que tornaria os gráficos ilegíveis.
+
+### Pré-processamento aplicado só ao motor léxico
+
+A tokenização (minúsculas, remoção de acentos, de caracteres especiais e de stopwords)
+alimenta **apenas** o BM25. O motor semântico recebe o texto original, porque o modelo de
+embeddings já trata acentuação e palavras funcionais e perderia contexto com o texto
+mutilado. A remoção de acentos faz `CÓD-ECG-12D` e `COD-ECG-12D` colidirem no mesmo token.
+
+### Contingência sem internet
+
+Se o modelo de embeddings não puder ser carregado, a aplicação cai automaticamente na
+**simulação vetorial TF-IDF** permitida pelo enunciado, exibindo um aviso na interface.
+Vale registrar que nesse modo os sinônimos deixam de ser recuperados: TF-IDF é um método
+léxico e retorna similaridade 0.000 para `ataque cardíaco` em todos os seis documentos.
+
+### Limitação conhecida do RRF
+
+A fórmula exige um `Rank` para **todo** documento, inclusive os que o motor não recuperou.
+Documentos com score BM25 = 0 recebem posição por desempate alfabético, então a
+contribuição deles na fusão é arbitrária e não mede relevância. A fórmula foi mantida
+exatamente como especificada no enunciado, e a interface sinaliza o caso na aba
+*Matriz Comparativa*.
+
+### Cross-Encoder
+
+O modelo `cross-encoder/ms-marco-MiniLM-L-6-v2` indicado no enunciado é treinado em
+inglês, o que produz scores muito negativos sobre textos em português (ex.: −11.1 para o
+Doc 1). A ordenação relativa continua útil, mas os valores absolutos não devem ser lidos
+como probabilidade de relevância.
 
 ## Resultado esperado
 
