@@ -34,16 +34,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Constante de suavizacao de posicao exigida pelo enunciado.
 K_RRF = 60
 
 MODELO_EMBEDDINGS = "sentence-transformers/distiluse-base-multilingual-cased-v1"
 MODELO_CROSS_ENCODER = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-
-# ---------------------------------------------------------------------------
-# Fase 1 - Ingestao do corpus medico
-# ---------------------------------------------------------------------------
 
 CORPUS = [
     {
@@ -101,12 +95,6 @@ DOCS_POR_ID = {doc["id"]: doc for doc in CORPUS}
 TEXTOS = [f"{doc['titulo']}. {doc['conteudo']}" for doc in CORPUS]
 
 
-# ---------------------------------------------------------------------------
-# Fase 1 - Pre-processamento
-# ---------------------------------------------------------------------------
-
-# Lista embutida no proprio script para manter a entrega em arquivo unico e
-# permitir execucao totalmente offline (sem download de corpora do NLTK).
 STOPWORDS_PT = {
     "a", "ao", "aos", "aquela", "aquelas", "aquele", "aqueles", "aquilo", "as",
     "ate", "com", "como", "da", "das", "de", "dela", "delas", "dele", "deles",
@@ -121,18 +109,15 @@ STOPWORDS_PT = {
     "tem", "teu", "teus", "tua", "tuas", "um", "uma", "voce", "voces",
 }
 
-
 def remover_acentos(texto):
     """Reduz o texto a ASCII para que 'CÓD-ECG-12D' e 'COD-ECG-12D' colidam."""
     normalizado = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in normalizado if not unicodedata.combining(c))
 
-
 def normalizar(texto):
     """Minusculas, sem acentos e sem caracteres especiais."""
     texto = remover_acentos(texto.lower())
     return re.sub(r"[^a-z0-9]+", " ", texto).strip()
-
 
 def tokenizar(texto):
     """Aplica a normalizacao e elimina stopwords em portugues.
@@ -143,13 +128,7 @@ def tokenizar(texto):
     """
     return [t for t in normalizar(texto).split() if t and t not in STOPWORDS_PT]
 
-
 CORPUS_TOKENIZADO = [tokenizar(texto) for texto in TEXTOS]
-
-
-# ---------------------------------------------------------------------------
-# Fase 2 - Motor lexico Okapi BM25
-# ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner=False)
 def construir_bm25(k1, b):
@@ -169,14 +148,8 @@ def buscar_bm25(consulta, k1, b):
 
     indice = construir_bm25(k1, b)
     scores = np.asarray(indice.get_scores(tokens), dtype=float)
-    # Com k1 = 0 a razao tf/(tf + 0) vira 0/0 para termos ausentes do documento.
     scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
     return {doc_id: float(score) for doc_id, score in zip(IDS, scores)}
-
-
-# ---------------------------------------------------------------------------
-# Fase 3 - Motor semantico vetorial
-# ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner="Carregando modelo de embeddings...")
 def carregar_bi_encoder():
@@ -190,9 +163,8 @@ def carregar_bi_encoder():
         from sentence_transformers import SentenceTransformer
 
         return SentenceTransformer(MODELO_EMBEDDINGS), None
-    except Exception as erro:  # download indisponivel, modelo ausente etc.
+    except Exception as erro:
         return None, str(erro)
-
 
 @st.cache_resource(show_spinner=False)
 def vetorizar_corpus():
@@ -202,11 +174,9 @@ def vetorizar_corpus():
         vetores = modelo.encode(TEXTOS, normalize_embeddings=True)
         return "embeddings", vetores, None
 
-    # Contingencia documentada: simulacao vetorial com TF-IDF.
     vetorizador = TfidfVectorizer(tokenizer=tokenizar, token_pattern=None)
     matriz = vetorizador.fit_transform(TEXTOS)
     return "tfidf", (vetorizador, matriz), erro
-
 
 def buscar_semantico(consulta):
     """Retorna ({doc_id: similaridade de cosseno}, modo, erro)."""
@@ -218,7 +188,6 @@ def buscar_semantico(consulta):
     if modo == "embeddings":
         modelo, _ = carregar_bi_encoder()
         vetor_consulta = modelo.encode([consulta], normalize_embeddings=True)
-        # Vetores normalizados: o produto interno ja e a similaridade de cosseno.
         similaridades = cosine_similarity(vetor_consulta, artefato)[0]
     else:
         vetorizador, matriz = artefato
@@ -227,22 +196,15 @@ def buscar_semantico(consulta):
     scores = {doc_id: float(s) for doc_id, s in zip(IDS, similaridades)}
     return scores, modo, erro
 
-
 def dimensao_vetorial():
     """Numero de dimensoes do espaco vetorial em uso."""
     _, artefato, _ = vetorizar_corpus()
     return artefato.shape[1] if hasattr(artefato, "shape") else artefato[1].shape[1]
 
-
-# ---------------------------------------------------------------------------
-# Fase 4 - Reciprocal Rank Fusion
-# ---------------------------------------------------------------------------
-
 def posicoes(scores):
     """Converte scores em posicoes de ranking (1 = melhor)."""
     ordenado = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     return {doc_id: posicao for posicao, (doc_id, _) in enumerate(ordenado, start=1)}
-
 
 def fundir_rrf(scores_lexicos, scores_semanticos, alpha, k=K_RRF):
     """Score_RRF(D) = a * 1/(k + Rank_BM25) + (1 - a) * 1/(k + Rank_Semantico).
@@ -258,11 +220,6 @@ def fundir_rrf(scores_lexicos, scores_semanticos, alpha, k=K_RRF):
         + (1.0 - alpha) * (1.0 / (k + rank_semantico[doc_id]))
         for doc_id in IDS
     }
-
-
-# ---------------------------------------------------------------------------
-# Bonus - Cross-Encoder Re-Ranking
-# ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner="Carregando Cross-Encoder...")
 def carregar_cross_encoder():
@@ -283,11 +240,6 @@ def reranquear_cross_encoder(consulta, doc_ids):
     pares = [[consulta, f"{DOCS_POR_ID[d]['titulo']}. {DOCS_POR_ID[d]['conteudo']}"] for d in doc_ids]
     notas = modelo.predict(pares)
     return {doc_id: float(nota) for doc_id, nota in zip(doc_ids, notas)}, None
-
-
-# ---------------------------------------------------------------------------
-# Camada de apresentacao
-# ---------------------------------------------------------------------------
 
 def formatar(valor):
     return f"{valor:.5f}" if abs(valor) < 1 else f"{valor:.3f}"
@@ -314,7 +266,6 @@ def render_ranking(scores, rotulo, top_n=6, ocultar_zeros=False):
             with direita:
                 st.metric(rotulo, formatar(score))
             st.write(doc["conteudo"])
-
 
 def render_matriz(scores_lexicos, scores_semanticos, scores_rrf):
     rank_lexico = posicoes(scores_lexicos)
@@ -344,9 +295,6 @@ def render_matriz(scores_lexicos, scores_semanticos, scores_rrf):
         "Nos gráficos, quanto menor a barra, melhor a posição."
     )
 
-    # O RRF exige uma posicao para TODO documento, inclusive os que o motor nao
-    # recuperou. Documentos com score 0 recebem posicao por desempate alfabetico,
-    # entao a contribuicao deles na fusao e arbitraria - nao mede relevancia.
     zerados = [d for d in IDS if scores_lexicos[d] <= 0]
     if zerados:
         st.warning(
@@ -358,11 +306,6 @@ def render_matriz(scores_lexicos, scores_semanticos, scores_rrf):
         )
     st.bar_chart(df.set_index("ID")[["Rank BM25", "Rank Semântico", "Rank RRF"]])
     return df
-
-
-# ---------------------------------------------------------------------------
-# Sidebar - controles de calibracao
-# ---------------------------------------------------------------------------
 
 EXEMPLOS = [
     "infarto",
@@ -419,16 +362,9 @@ with st.sidebar:
     usar_cross_encoder = st.checkbox("Aplicar Cross-Encoder Re-Ranking", value=False)
     st.caption("Re-ordena o Top-3 do RRF com um modelo de relevância par-a-par.")
 
-
-# ---------------------------------------------------------------------------
-# Execucao do pipeline
-# ---------------------------------------------------------------------------
-
 st.title("🩺 HealthSearch")
 st.subheader("Motor de Busca Híbrido · BM25 + Semântico + RRF")
 
-# Aquece os artefatos (indice BM25 e vetores do corpus) fora do cronometro:
-# a latencia exibida deve refletir a BUSCA, nao o carregamento do modelo.
 construir_bm25(k1, b)
 vetorizar_corpus()
 
