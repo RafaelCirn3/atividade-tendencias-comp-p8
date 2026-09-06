@@ -1,9 +1,11 @@
 # HealthSearch — Motor de Busca Híbrido BM25 + Semântico
 
 Projeto acadêmico da disciplina **Tendências em Ciência da Computação — Recuperação de Informação / Processamento de Linguagem Natural**, do UNIPÊ.
+
 Alunos: Ewellyn Maria de França O. Andrade, Gustavo Palmeira de A. Martinez e Rafael Cirne Medeiros.
 
 O objetivo é construir um protótipo em **Streamlit** capaz de combinar busca léxica com **Okapi BM25** e busca semântica baseada em **embeddings**, utilizando **Reciprocal Rank Fusion (RRF)** para gerar um ranking híbrido de documentos médicos.
+Utilizamos como apoio para documentação o Copilot e para programação a Claude, modelo Opus 5
 
 ## Contexto do problema
 
